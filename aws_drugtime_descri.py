@@ -1,146 +1,180 @@
-import datetime
-from operator import length_hint
 import requests
-import re
-from word2number import w2n
 import boto3
 import json
+from typing import Optional
+from fastapi import FastAPI
 
-url = "https://www.clinicaltrials.gov/api/query/full_studies?expr=Effect+of+Hydralazine+on+Alzheimer%27s+Disease+%28EHSAN%29&min_rnk=1&max_rnk=1&fmt=json"
-response = requests.get(url).json()
-detail_description = ""
-brief_description = ""
-drug_list = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['ArmsInterventionsModule']['InterventionList']['Intervention']
-try:
-    detail_description = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['DescriptionModule']["BriefSummary"]
-except KeyError:
-    print("")
-try:
-    brief_description = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['DescriptionModule']["DetailedDescription"]
-except KeyError:
-    print("")
+app = FastAPI()
 
-#print(detail_description)
-#print(drug_list)
+def drug_time(api_url):
+    url = api_url
 
-drug = []
-time = []
-time_set = []
-time_label = ['day','days','week','weeks','month','year']
-time_label2 = ['day','week','month','year']
-drug_date = []
-left = 0
-right = 0
+    
+    response = requests.get(url).json()
+    detail_description = ""
+    brief_description = ""
+    drug_list = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['ArmsInterventionsModule']['InterventionList']['Intervention']
+    arm_name = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['ArmsInterventionsModule']['ArmGroupList']['ArmGroup']
 
-drug_dict = {}
+    try:
+        detail_description = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['DescriptionModule']["BriefSummary"]
+    except KeyError:
+        pass
+    try:
+        brief_description = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']['DescriptionModule']["DetailedDescription"]
+    except KeyError:
+        print("")
 
-for i in range(len(drug_list)):
-    drug.append(drug_list[i]['InterventionName'])
-    drug_dict[drug_list[i]['InterventionName'].lower()] = ""
-#print(drug)
+    drug = []
+    time_label = ['day','days','week','weeks','month','year']
+    time_label2 = ['day','week','month','year']
+    amount = ['mg','g ']
+    drug_date = []
+    left = 0
+    right = 0
 
+    drug_dict = {}
 
-slpit = detail_description.replace(",", "").split(". ") + brief_description.replace(",", "").split(".")
+    Arm_group = {}
+    for arms in arm_name:
+        Arm_group[arms['ArmGroupLabel']] = {'ArmGroupType' : '', 'InterventionList' : '', 'InteventionDescription' : []}
+        Arm_group[arms['ArmGroupLabel']]['ArmGroupType'] = arms['ArmGroupType']
+        Arm_group[arms['ArmGroupLabel']]['InterventionList'] = arms['ArmGroupInterventionList']
 
-for i1 in range(len(slpit)):    
-    temp = slpit[i1].split()
-    #print(temp)
-    #print(slpit[i1])
-    for i2 in range(len(drug)):
-        if drug[i2]+ ' ' in slpit[i1]:
-            #print(slpit[i1])
-            drug_index = temp.index(drug[i2])
-            #print(drug_index)
-            #print(temp[drug_index])
-            for i5 in range(len(time_label)):
-                for i3 in range(drug_index-1, -1, -1):
-                    if time_label[i5] == temp[i3]:
-                        left = i3
-                        break
-                for i4 in range(drug_index, len(temp)):
-                    if time_label[i5] == temp[i4]:
-                        right = i4
-                        break
-            #print(left , right)
-            if left == 0 and right == 0:
-                continue
-            elif left == 0 or abs(drug_index - left) >= abs(drug_index - right):
-                drug_date.append(temp[drug_index : right + 1])
-                drug_dict[temp[drug_index].lower()] = temp[right - 1] + " " + temp[right]
-            elif right == 0 or abs(drug_index - left) < abs(drug_index - right):
-                drug_date.append(temp[left-1 :drug_index  + 1])
-                drug_dict[temp[drug_index].lower()] = temp[left - 1] + " " + temp[left]
-            left = 0
-            right = 0
-            #print("--------------------------------------------")
-            
-        elif drug[i2].lower() + ' ' in slpit[i1]:
-            #print(slpit[i1])
-            drug_index = temp.index(drug[i2].lower())
-            #print(drug_index)
-            #print(temp[drug_index])
-            for i5 in range(len(time_label)):
-                for i3 in range(drug_index-1, -1, -1):
-                    if time_label[i5] == temp[i3]:
-                        left = i3
-                        break
-                for i4 in range(drug_index, len(temp)):
-                    if time_label[i5] == temp[i4]:
-                        right = i4
-                        break
-            #print(left , right)
-            if left == 0 and right == 0:
-                continue
-            elif left == 0 or abs(drug_index - left) >= abs(drug_index - right):
-                drug_date.append(temp[drug_index : right + 1])
-                drug_dict[temp[drug_index]] = temp[right - 1] + " " + temp[right]    
-            elif right == 0 or abs(drug_index - left) < abs(drug_index - right):
-                drug_date.append(temp[left :drug_index  + 1])
-                drug_dict[temp[drug_index]] = temp[left - 1] + " " + temp[left]
-            left = 0
-            right = 0
-#print(drug_date)
-print(drug_dict)
+    print(Arm_group)
 
 
 
-#---------------------------------여기까지가 그냥 description관련된 코드
 
-comprehend = boto3.client('comprehend')
+    for i in range(len(drug_list)):
+        drug.append(drug_list[i]['InterventionName'])
+        drug_dict[drug_list[i]['InterventionName'].lower()] = {'Duration' : '', 'Dosage' : ''}
 
-DetectEntitiestext = detail_description
-test = (comprehend.detect_entities(Text=DetectEntitiestext, LanguageCode='en'))
+    slpit = detail_description.replace(",", "").split(". ") + brief_description.replace(",", "").split(".")
+
+    for i1 in range(len(slpit)):    
+        temp = slpit[i1].split()
+        for i2 in range(len(drug)):
+            if drug[i2]+ ' ' in slpit[i1]:
+                drug_index = temp.index(drug[i2].split()[0])
+                for i5 in range(len(time_label)):
+                    for i3 in range(drug_index-1, -1, -1):
+                        if time_label[i5] == temp[i3]:
+                            left = i3
+                            break
+                    for i4 in range(drug_index, len(temp)):
+                        if time_label[i5] == temp[i4]:
+                            right = i4
+                            break
+                if left == 0 and right == 0:
+                    continue
+                elif left == 0 or abs(drug_index - left) >= abs(drug_index - right):
+                    drug_date.append(temp[drug_index : right + 1])
+                    drug_dict[temp[drug_index].lower()]['Duration'] = temp[right - 1] + " " + temp[right]
 
 
-protocolsection = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']
+                elif right == 0 or abs(drug_index - left) < abs(drug_index - right):
+                    drug_date.append(temp[left-1 :drug_index  + 1])
+                    drug_dict[temp[drug_index].lower()]['Duration'] = temp[left - 1] + " " + temp[left]
 
-index2 = 0
-for value in protocolsection['ArmsInterventionsModule']['InterventionList']['Intervention']:
-    for i in drug_dict:
-        #print(i)
-        #print(value["InterventionName"])
-        if i == value["InterventionName"].lower():
-            DetectEntitiestext = value['InterventionDescription']
-            #print(DetectEntitiestext)
-            test = (comprehend.detect_entities(Text=DetectEntitiestext, LanguageCode='en'))
-            with open("name" + str(index2)  +".json", 'w') as json_file:
+
+                left = 0
+                right = 0
                 
-                json.dump(test, json_file, sort_keys=True, indent=4)
-            with open("name" + str(index2)+".json", "r") as read_file:
-                index2= index2+1
-                data = json.load(read_file)
-                for i2 in range(len(data['Entities'])):
-                    #print("요기있지욜")
-                    #print(data['Entities'][i2]['Text'])
-                    for j in range(len(time_label2)):
-                        #print("조기있지욜")
-                        #print(time_label2[j])
-                        if time_label2[j] in data['Entities'][i2]['Text']:
-                            drug_dict[i.lower()] = data['Entities'][i2]['Text']
-                #print(time)
-print(drug_dict)
+            elif drug[i2].lower() + ' ' in slpit[i1]:
+                drug_index = temp.index(drug[i2].split()[0].lower())
+                for i5 in range(len(time_label)):
+                    for i3 in range(drug_index-1, -1, -1):
+                        if time_label[i5] == temp[i3]:
+                            left = i3
+                            break
+                    for i4 in range(drug_index, len(temp)):
+                        if time_label[i5] == temp[i4]:
+                            right = i4
+                            break
+                if left == 0 and right == 0:
+                    continue
+                elif left == 0 or abs(drug_index - left) >= abs(drug_index - right):
+                    drug_date.append(temp[drug_index : right + 1])
+                    drug_dict[temp[drug_index]]['Duration'] = temp[right - 1] + " " + temp[right]    
+                elif right == 0 or abs(drug_index - left) < abs(drug_index - right):
+                    drug_date.append(temp[left :drug_index  + 1])
+                    drug_dict[temp[drug_index]] = temp[left - 1] + " " + temp[left]
+                    drug_dict[temp[drug_index]]['Duration'] = temp[left - 1] + " " + temp[left]
+                left = 0
+                right = 0
+    #print(drug_dict)
+    comprehend = boto3.client('comprehend')
 
-#------------------------------------------이제 각 실험군끼리 연결 시키는 부분
+    DetectEntitiestext = detail_description
+    test = (comprehend.detect_entities(Text=DetectEntitiestext, LanguageCode='en'))
 
-# for value in protocolsection['ArmsInterventionsModule']['ArmGroupList']['ArmGroup']:
-#     for index3 in drug_dict:
+
+    protocolsection = response['FullStudiesResponse']['FullStudies'][0]['Study']['ProtocolSection']
+
+    index2 = 0
+    for value in protocolsection['ArmsInterventionsModule']['InterventionList']['Intervention']:
+        for i in drug_dict:
+            if i == value["InterventionName"].lower():
+                DetectEntitiestext = value['InterventionDescription']
+                test = (comprehend.detect_entities(Text=DetectEntitiestext, LanguageCode='en'))
+                with open("ACdata" + str(index2)  +".json", 'w') as json_file:
+                    
+                    json.dump(test, json_file, sort_keys=True, indent=4)
+                with open("ACdata" + str(index2)+".json", "r") as read_file:
+                    index2= index2+1
+                    data = json.load(read_file)
+                    for i2 in range(len(data['Entities'])):
+                        if(data['Entities'][i2]['Type'] == "QUANTITY"):
+                            for k in range(len(amount)):
+                                if (amount[k] in test['Entities'][i2]['Text']):
+                                    drug_dict[i.lower()]['Dosage'] = test['Entities'][i2]['Text']
+                        for j in range(len(time_label2)):
+                            if time_label2[j] in data['Entities'][i2]['Text']:
+                                drug_dict[i.lower()]['Duration'] = data['Entities'][i2]['Text']
+    #print(drug_dict)
+    comprehend_med = boto3.client(service_name='comprehendmedical')
+
+    DetectEntitiestext = brief_description + detail_description
+    result = comprehend_med.detect_entities(Text=DetectEntitiestext)
+    i = 0
+    with open("ACMdata" + str(i) +".json", 'w') as json_file:
+        json.dump(result, json_file, sort_keys=True, indent=4)
+        i = i + 1
+
+    entities = result['Entities']
+    for value in entities:
+        try:
+            for content in value['Attributes']:
+                if content['RelationshipType'] == "FREQUENCY":
+                    for content2 in drug_dict:
+                        if value["Text"] in content2:
+                            drug_dict[content2]['Duration'] = drug_dict[content2]['Duration'] +"("+ content['Text'] + ")"
+        except KeyError as e:
+            print()
+    #print(drug_dict)
+    
+
+    for arm in Arm_group:
+        for DrugName in Arm_group[arm]['InterventionList']['ArmGroupInterventionName']:
+            for DrugInList in drug_dict:
+                if DrugInList in DrugName.lower():
+                    print(DrugInList)
+                    Arm_group[arm]['InteventionDescription'].append(DrugInList)
+                    #Arm_group[arm]['InteventionDescription'][DrugName]
+
+
+                    #Arm_group[arm]['InteventionDescription'][DrugInList] = ("'" + DrugInList + "'" + ": "+  "{" + drug_dict[DrugInList] + "}")
+                    #Arm_group[arm]['InteventionDescription'][DrugInList] = drug_dict[DrugInList]
+
+    
+    
+    print(Arm_group)
+    return (Arm_group)
+
+#    return drug_dict
+
+print(drug_time("https://www.clinicaltrials.gov/api/query/full_studies?expr=Placebo+Controlled+Double+Blind+Crossover+Trial+of+Metformin+for+Brain+Repair+in+Children+With+Cranial-Spinal+Radiation+for+Medulloblastoma&min_rnk=1&max_rnk=&fmt=json"))
+@app.get("/")
+def read_root():
+    return drug_time("https://www.clinicaltrials.gov/api/query/full_studies?expr=Placebo+Controlled+Double+Blind+Crossover+Trial+of+Metformin+for+Brain+Repair+in+Children+With+Cranial-Spinal+Radiation+for+Medulloblastoma&min_rnk=1&max_rnk=&fmt=json")
